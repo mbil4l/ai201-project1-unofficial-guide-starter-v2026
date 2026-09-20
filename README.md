@@ -161,30 +161,151 @@ rank 4, framing chunk at rank 1.
 
 ## Sample Answer
 
-<!-- One complete question and answer, pasted as text, with the source line
-     visible. Milestone 4. -->
-
-**Question:**
+**Question:** How often does the access road to the Elder Ness headland flood, and for how long?
 
 **Answer:**
 
 ```
+  (best distance 0.289, cutoff 0.72)
+
+The access road to the Elder Ness headland floods roughly six times a year at
+the highest spring tides, for about two hours either side of high water
+(*guide_elder_ness.md* and *guide_walking.md*).
+
+Sources retrieved: guide_elder_ness.md, guide_walking.md
 ```
 
-**My relevance cutoff:**
+Grounded: every number in it — six times a year, two hours either side — is in
+the retrieved chunks, and both files that carry the fact are named rather than
+just the first one.
 
-<!-- The number you set in config.py, and how you got there.
+**Top-k:** 5, unchanged, but now on measurement. Across my five questions the
+deepest rank at which the answer chunk appears is 4 (the accessibility
+question), so 5 leaves one slot of headroom. Going to 6-8 adds only loosely
+related material — on my Brightwater question, ranks 6, 7 and 8 are other
+Brightwater sections at 0.45-0.50 that share the town name and nothing else.
+Dropping to 4 would leave zero headroom on the question that already needs the
+deepest reach.
 
-     You ran five questions your corpus covers and the five in OUT_OF_SCOPE
-     that it clearly doesn't, and wrote down the best distance for each. What
-     did those two groups look like? Where was the gap? Put the actual numbers
-     here — the table below wants all ten rows.
-
-     Milestone 4. -->
+**My relevance cutoff:** `THRESHOLD = 0.72`.
 
 | Question | In corpus? | Best distance |
 |---|---|---|
-|  |  |  |
+| What hours do the pubs in Kestrelford serve food? | yes | 0.158 |
+| By what time do the car parks in Halden Bay fill up on a summer weekend? | yes | 0.283 |
+| How often does the access road to the Elder Ness headland flood, and for how long? | yes | 0.289 |
+| Why does Brightwater get quiet in July and August when the rest of the region is busy? | yes | 0.314 |
+| Which town in the region is easiest to get around with limited mobility? | yes | 0.386 |
+| What is the capital of Mongolia? | no | 0.810 |
+| What is the recommended dosage of ibuprofen for a headache? | no | 0.835 |
+| How do I write a for loop in Rust? | no | 0.861 |
+| How do I change the oil in a diesel engine? | no | 0.881 |
+| Who won the 1992 World Cup? | no | 0.963 |
+
+Two clean groups — 0.158-0.386 and 0.810-0.963 — with a gap of 0.42 between
+them. The starter's 0.6 sits inside it, and if I had stopped here I would have
+kept 0.6 and called the milestone done.
+
+**Why I didn't.** My five questions are a sample I wrote myself, using the
+corpus's own vocabulary, so they are unrepresentatively easy. I ran ten more
+questions the corpus genuinely answers, phrased the way a visitor would ask:
+
+| Loosely phrased, still answerable | Best distance |
+|---|---|
+| Can I get a train to Kestrelford? | 0.349 |
+| Which places close out of season? | 0.461 |
+| Is it worth visiting in winter? | 0.540 |
+| Is the region wheelchair friendly? | 0.544 |
+| What time do things shut? | 0.585 |
+| What's the food like? | 0.601 |
+| Somewhere quiet with good walks and no cars | 0.611 |
+| Where should I go if I want to avoid crowds? | 0.625 |
+| Do I need cash? | 0.637 |
+| How bad is the parking? | 0.639 |
+
+**At 0.6, five of those ten are refused** — including "Do I need cash?", which
+nine of my guides answer in their Practical notes, and "How bad is the
+parking?", which is the defining feature of a visit to Halden Bay. That is the
+"too low" column of the trade-off table happening on real questions, and my
+five test questions could never have shown it to me.
+
+So the real in-scope range is 0.158-0.639 and the out-of-corpus range is
+0.810-0.963. **0.72 is the midpoint of 0.639 and 0.810.** It keeps all ten
+loose questions and still refuses all five out-of-corpus ones with 0.09 to
+spare.
+
+### What the cutoff cannot do
+
+The gap above only exists because `OUT_OF_SCOPE` is from a different world
+entirely. I tested eight travel questions in the *same* domain that these 14
+documents cannot answer:
+
+| Near-miss out-of-scope | Best distance | Top chunk retrieved |
+|---|---|---|
+| Does Elder Ness have a hospital on the headland? | 0.311 | Elder Ness — Where to stay |
+| Is there a cinema in Kestrelford? | 0.366 | Kestrelford — Where to stay |
+| How do I get to the airport at Halden Bay? | 0.427 | Halden Bay — Getting around |
+| What are the opening hours of the Brightwater aquarium? | 0.437 | Brightwater — Getting there |
+| Where is the best pub in Brighton? | 0.478 | Corry Vale — Eat and drink |
+| How much is a taxi from Marchwood to Heathrow? | 0.482 | Marchwood — Getting there |
+| What time does the train to Edinburgh leave? | 0.543 | Kestrelford — Getting there |
+| Which beach in Cornwall has the best surfing? | 0.576 | Getting around the region — Walking and cycling |
+
+These run 0.311-0.576, which is *inside* the legitimate in-scope range and
+mostly *below* it. "Does Elder Ness have a hospital on the headland?" scores
+0.311 — closer than four of my five real test questions, and there is no
+aquarium in Brightwater, no cinema in Kestrelford and no airport at Halden Bay.
+
+**No cutoff separates these from real questions,** because distance measures
+topical similarity, not whether the answer is present. A question about the
+right town in the right region retrieves that town's chunks whatever it asks.
+Lowering the cutoff to catch them would refuse most of the legitimate questions
+above first. This is the line in the brief made concrete: the gate catches the
+clear misses, and the near ones have to be caught by the second layer.
+
+### Grounding
+
+`GROUNDING_INSTRUCTION` in `generate.py` was not strict enough, and it took a
+targeted probe to show it. The cinema question it handled correctly — *"there is
+no mention of a cinema in Kestrelford, so I don't have enough information
+(guide_kestrelford.md)"*. The failure is on disagreement.
+
+Nine of my 14 guides repeat the same Practical-notes boilerplate, *"The nearest
+full hospital is in Brightwater"* — including `guide_brightwater.md` itself,
+which is nonsense — while `guide_accessibility.md` says *"The nearest full
+hospital is in Marchwood."* The corpus contradicts itself, and the original
+instruction had no rule for that.
+
+Asked "Where is the nearest full hospital if I am staying in Kestrelford?", with
+both files among the retrieved chunks:
+
+```
+Before:
+According to `guide_kestrelford.md`, the nearest full hospital is in Brightwater.
+
+After:
+If you are staying in Kestrelford, the nearest full hospital is in Brightwater
+(according to `guide_kestrelford.md`). However, `guide_accessibility.md` states
+that the nearest full hospital is in Marchwood.
+```
+
+The "before" is the dangerous kind of wrong: fluent, correctly formatted, citing
+a real file that really does say that, and hiding the fact that the corpus does
+not agree with itself. Nothing in the output marks it as a problem.
+
+I added four rules, each answering a failure I measured rather than a general
+worry:
+
+- **Name the file for each claim, and both files if there are two.** The
+  "before" answer cited one file while drawing on four.
+- **A fact about one place is not a fact about another.** Ten town guides carry
+  identically-named sections, so retrieval reliably returns the right town for a
+  topic that town's guide never covers.
+- **If the documents name the place but never mention the thing asked about, say
+  so rather than substituting the closest related fact.** This is the near-miss
+  table above, turned into a rule instead of luck.
+- **If two excerpts disagree, say they disagree and give both.** The hospital
+  case.
 
 ## How I Used AI
 

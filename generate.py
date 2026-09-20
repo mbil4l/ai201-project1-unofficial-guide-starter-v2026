@@ -273,12 +273,24 @@ def generate(prompt: str, system: str | None = None, cache: bool = True) -> str:
 
 # ─── The grounded answer ─────────────────────────────────────────────────────
 
+# Tightened in Milestone 4. Each rule below answers a failure I measured on
+# this corpus rather than a general worry — see README "Grounding".
+#
+#   - 9 of the 14 guides repeat the same "nearest full hospital is in
+#     Brightwater" boilerplate, and guide_accessibility.md says Marchwood. Asked
+#     which, the original instruction picked one and stated it flatly.
+#   - 10 town guides carry identically-named sections, so retrieval reliably
+#     returns the right town for a topic that town's guide never covers.
+#   - The original named one file while drawing on four.
 GROUNDING_INSTRUCTION = """You answer questions using only the documents provided to you.
 
 Rules:
 - Use only the information in the documents below. Do not use anything you know from elsewhere.
 - If the documents don't cover the question, say you don't have enough information. Do not guess.
-- Name the document your answer came from, using the filename given in each excerpt.
+- Name the document each claim came from, using the filename given in each excerpt. If two claims come from two different files, name both.
+- Every excerpt begins with the place it describes. A fact about one place is not a fact about another: do not carry a detail from one town across to a different town, and do not treat a region-wide statement as specific to a town unless the excerpt says so.
+- If the question names a place the documents describe but asks about something they never mention, say the documents do not cover it. Do not answer with the closest related fact instead.
+- If two excerpts disagree, say that they disagree and give both, naming the file for each. Do not pick one and present it as settled.
 - Be brief. Two or three sentences is usually enough."""
 
 
@@ -297,7 +309,7 @@ def build_prompt(question: str, results) -> str:
     return (
         f"Documents:\n\n{context}\n\n"
         f"---\n\nQuestion: {question}\n\n"
-        f"Answer using only the documents above, and name the file you used."
+        f"Answer using only the documents above, and name the file each claim came from."
     )
 
 

@@ -53,10 +53,21 @@ TOP_K = 5               # how many chunks to pull back per question
 #
 # LOWER IS BETTER: 0.3 is a close match, 0.9 is unrelated.
 #
-# 0.6 is a reasonable starting point, not a right answer. Milestone 4 has you
-# measure your own two groups of distances and put the cutoff in the gap.
-# Most corpora land somewhere between 0.45 and 0.75.
-THRESHOLD = 0.6
+# Measured in Milestone 4 (see README "Relevance Cutoff"). Two groups:
+#   my 5 test questions      0.158 - 0.386
+#   loosely phrased but
+#     still answerable       0.349 - 0.639   <- the group that set this number
+#   OUT_OF_SCOPE (far)       0.810 - 0.963
+#
+# 0.72 is the midpoint of 0.639 and 0.810. The starter's 0.6 refused five of
+# ten legitimate questions, including "Do I need cash?" (0.637) and "How bad is
+# the parking?" (0.639), both of which the corpus answers.
+#
+# What this number CANNOT do: near-miss travel questions this corpus can't
+# answer score 0.311 - 0.576, overlapping the legitimate range. No cutoff
+# separates those. GROUNDING_INSTRUCTION in generate.py is the layer that has
+# to catch them.
+THRESHOLD = 0.72
 
 
 # ─── Models ──────────────────────────────────────────────────────────────────

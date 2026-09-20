@@ -1,6 +1,8 @@
 # The Unofficial Guide
 
-<!-- Replace this line with your name and which corpus you picked. -->
+**YOUR NAME HERE** — corpus: `city_guides`
+
+<!-- ^ replace the name; the corpus is filled in. -->
 
 > **This file is your submission.** Fill it in as you go — most sections get
 > written during the milestone that produces them, not at the end.
@@ -21,11 +23,20 @@
 
 ## What This Does
 
-<!-- Three or four sentences. Which corpus you picked, and the kinds of
-     questions your system answers. Write it for someone who has never seen
-     this repo.
+This is a question-answering system over the `city_guides` corpus: 14 travel
+guides to one fictional region, covering ten towns — Brightwater, Halden Bay,
+Kestrelford, Elder Ness and others — plus four region-wide guides on eating,
+walking, seasons, transport and accessibility. Ask it a specific logistical
+question about the region and it retrieves the relevant sections and answers
+from them, naming the file each claim came from.
 
-     Milestone 5. -->
+It handles questions with a definite answer somewhere in the documents: what
+hours the pubs in Kestrelford serve food, by what time the Halden Bay car parks
+fill on a summer weekend, how often the Elder Ness access road floods. It is
+not a recommendation engine — "where should I go on holiday?" has no answer in
+these documents, and the system is built to say so rather than improvise. When
+retrieval comes back with nothing close enough, a relevance gate refuses the
+question before the model ever sees it.
 
 ## Chunking Strategy
 
@@ -309,18 +320,54 @@ worry:
 
 ## How I Used AI
 
-<!-- Two specific moments. For each: what you asked for, what came back, and
-     what you changed about it.
+Mostly for drafting code and measurement scripts from what I had already
+decided I wanted. The two moments worth writing down are both ones where what
+came back looked correct and wasn't.
 
-     "I asked Claude to write the chunking function from my notes. It ignored
-     the overlap, so I added that myself" is the level of detail we're after.
-     "I used AI to help me code" is not.
+**1. The chunker that split on headings and lost the town name.**
 
-     Milestone 5. -->
+I asked for a replacement for `split_documents` based on what I had found
+reading the corpus: the guides are already divided into `##` sections, 84 of
+them, median 294 characters, none over 800, so the sections should be the
+chunks. What came back did exactly that, and the summary line looked like a
+clear win — 94 chunks, nothing cut mid-sentence, no chunk spanning two
+headings, against the starter's 51 chunks of which 37 straddled a heading.
 
-**1.**
+Then I printed five chunks and read them, which is what Milestone 3 actually
+asks for. `guide_elder_ness.md` "Where to stay" reads *"The pub has four rooms
+and the observatory has dormitory accommodation…"* and never says Elder Ness.
+Nor does "Where to stay" in any of the other nine town guides. Splitting on
+headings had produced 94 complete thoughts about nowhere in particular, and
+because every town guide uses the same section names, a question about one town
+would have happily matched another town's paragraph.
 
-**2.**
+What I changed: every chunk now starts with a `Town — Section` label, taken
+from the document's `# Title` line, and the character budget subtracts the
+label so the ceiling still holds. That one line is the difference between a
+chunk that stands alone and one that only looks like it does, and the summary
+statistics could not have told me which I had.
+
+**2. A verification script that was stricter than my own criterion.**
+
+I asked for a script to check criterion 1 — "for at least 4 of my 5 test
+questions, the retrieved chunks include one that contains the answer" — against
+the `expects` strings I had written in Milestone 2. What came back tested
+whether `expects` appeared in the **top 3** results and reported my
+accessibility question as a failure, 4 of 5.
+
+I nearly wrote that down. But criterion 1 says "the retrieved chunks", and what
+the system actually retrieves is `TOP_K`, which is 5. The script had invented a
+stricter standard than the criterion it claimed to be measuring, and I would
+have recorded a MISS that my own target does not call a miss.
+
+What I changed: the script now reads `config.TOP_K` instead of a hard-coded 3.
+The real result is 5 of 5, with the accessibility question passing at rank 4.
+The underlying weakness was real and I kept it in the write-up — a content-free
+chunk holds rank 1 on that question while the chunk naming Thornby Wells sits
+at rank 4 — but it is a rank-ordering problem, not a criterion-1 failure, and
+those get diagnosed differently. Since then I have checked measurement scripts
+against the wording of the criterion they are supposed to be testing, not
+against what sounds rigorous.
 
 <!-- ── Stretch features ─────────────────────────────────────────────────────
      Doing one? Say so here BEFORE you start. A feature this README never

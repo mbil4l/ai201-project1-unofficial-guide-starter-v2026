@@ -22,12 +22,39 @@ names a target of "4 of 5", and four of three is not a thing.
 """
 
 QUESTIONS = [
-    # {"question": "...", "expects": "..."},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
-    {"question": "", "expects": ""},
+    # guide_halden_bay.md, and repeated in guide_regional_transport.md and
+    # guide_seasons.md — three documents say it, so this one should be easy.
+    {
+        "question": "By what time do the car parks in Halden Bay fill up on a summer weekend?",
+        "expects": "10am",
+    },
+    # guide_kestrelford.md and guide_eating.md. Two serving windows, so a
+    # correct answer has to give the evening one and not just "lunchtime".
+    {
+        "question": "What hours do the pubs in Kestrelford serve food?",
+        "expects": "8:30",
+    },
+    # guide_accessibility.md names it "the easiest town in the region";
+    # guide_walking.md calls it "the region's most accessible town on foot".
+    # Phrased as a recommendation, but the corpus gives it one right answer.
+    {
+        "question": "Which town in the region is easiest to get around with limited mobility?",
+        "expects": "Thornby Wells",
+    },
+    # guide_elder_ness.md "Getting there", echoed in guide_walking.md. One
+    # sentence buried in a paragraph about a village of 300 — this is the one I
+    # expect to miss, which is why criterion 1 says 4 of 5 and not 5 of 5.
+    {
+        "question": "How often does the access road to the Elder Ness headland flood, and for how long?",
+        "expects": "Six times a year",
+    },
+    # guide_seasons.md plus guide_brightwater.md "When to go". A why question
+    # rather than a lookup: the answer is the university emptying out, which
+    # inverts the usual summer pattern for the rest of the region.
+    {
+        "question": "Why does Brightwater get quiet in July and August when the rest of the region is busy?",
+        "expects": "students",
+    },
 ]
 
 # Questions from a different world entirely. Your gate should refuse all five.
@@ -40,7 +67,7 @@ QUESTIONS = [
 OUT_OF_SCOPE = [
     "What is the capital of Mongolia?",
     "How do I change the oil in a diesel engine?",
-    "Who won the 1994 World Cup?",
+    "Who won the 1992 World Cup?",
     "What is the recommended dosage of ibuprofen for a headache?",
     "How do I write a for loop in Rust?",
 ]

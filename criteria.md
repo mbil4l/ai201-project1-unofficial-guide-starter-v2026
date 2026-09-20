@@ -23,8 +23,14 @@ For at least 4 of my 5 test questions, the retrieved chunks include one that
 contains the answer.
 
 **Why this target:**
-<!-- e.g. "One of my questions is about a topic only two documents mention, so
-     I expect that one to be hard." -->
+4 of 5 rather than 5 of 5 because one of my questions is deliberately harder
+than the rest. "How often does the access road to the Elder Ness headland
+flood?" rests on a single sentence in the "Getting there" paragraph of
+`guide_elder_ness.md` — a guide to a village of 300 — and is echoed in only one
+other document. At the starter's 800-character chunk size that sentence sits
+mid-window, surrounded by unrelated transport detail about bus services and
+parking. I expect it to be the one that misses. My other four questions are
+each stated in two or more documents.
 
 ---
 
@@ -33,8 +39,13 @@ contains the answer.
 Every answer the system produces names at least one source document.
 
 **Why this target:**
-<!-- Why all five and not four? What about your setup makes that achievable —
-     or what would have to go wrong for it not to be? -->
+All five, because attribution here does not depend on retrieval being good —
+only on the model following an instruction. `generate.py::build_prompt` labels
+every chunk it passes in as `[from <filename>]`, and the filename is asked for
+twice: once in `GROUNDING_INSTRUCTION` and again in the prompt's closing line.
+The model never has to infer a source, it only has to repeat one it was handed.
+So the only way this fails is the model dropping the citation from otherwise
+sound prose, and a target of 4 of 5 would just be excusing that in advance.
 
 ---
 
@@ -50,47 +61,77 @@ in at least 4 of 5 tries.
      just keep five of them, or the "4 of 5" above has nothing to be 4 of. -->
 
 **Why this target:**
-<!-- What did your distances look like when you set the cutoff in Milestone 4?
-     Was there a clean gap, or did the two groups overlap? -->
+I have not measured my distances yet — that is Milestone 4, and `THRESHOLD` is
+still the starter's default of 0.6. I am writing 4 of 5 rather than 5 of 5
+because one of my out-of-scope questions is not as far out as the other four:
+"What is the recommended dosage of ibuprofen for a headache?" shares vocabulary
+with the practical-notes section that closes almost every guide in my corpus,
+which talks about the nearest full hospital and minor injuries units with
+limited hours. I expect that question to land closest to my documents and to be
+the one that slips through.
 
 ---
 
-## 4. Something about your chunks
+## 4. Each chunk holds exactly one section
 
-<!-- YOU WRITE THIS ONE.
-
-     How would you know if your chunks were the right size? Name something
-     countable or observable.
-
-     Examples of the right shape — don't copy these, they should come from
-     what you actually saw in Milestone 3:
-       - "At least 4 of 5 sampled chunks read as a complete thought, with no
-          sentence cut in half at either end."
-       - "No chunk is shorter than 200 characters, since anything below that
-          in my corpus turned out to be a heading with no content under it." -->
-
-
+No chunk contains text from more than one `##` section of a guide, and in a
+sample of 10 chunks printed by `app.py chunks`, all 10 begin at a heading and
+end at a sentence boundary — no sentence cut in half at either end.
 
 **Why this target:**
+My 14 guides are already divided into 84 `##` sections — "Getting there", "Eat
+and drink", "When to go" — and I measured them before writing this: the longest
+is 708 characters, the median is 294, and not one reaches 800. So every section
+already fits inside a single chunk at the current chunk size, and the sections
+are the units the documents were actually written in. All five of my test
+questions are answered inside one section rather than across two.
 
+The starter's fixed 800-character window ignores that structure completely: a
+2,100-character guide becomes three windows that each straddle two or three
+section boundaries, so the Elder Ness flooding sentence ends up in the same
+chunk as unrelated parking detail. "Right size" for this corpus therefore means
+one section, and the observable version of that claim is where the boundaries
+land.
+
+I am asking for 10 of 10 rather than 8 of 10 because once the split is on
+headings it is deterministic — if a chunk straddles a boundary, the rule is not
+actually the rule, and a near miss would tell me I had a bug rather than a
+tuning problem.
+
+One thing I considered and rejected: a minimum chunk length. Five of my 84
+sections are under 200 characters — `guide_thornby_wells.md` "Where to stay" is
+173 — and each is a complete, answerable thought. A length floor would be the
+wrong rule for this corpus, and I would rather say so now than discover it in
+Milestone 3.
 
 
 ---
 
-## 5. Your choice
+## 5. A clear margin between in-scope and out-of-scope questions
 
-<!-- YOU WRITE THIS ONE TOO.
-
-     Pick something you actually care about getting right. It could be about
-     speed, about refusals, about a particular kind of question your corpus
-     handles badly, about source attribution being correct rather than merely
-     present — anything, as long as it names a number or an observable
-     outcome. -->
-
-
+All five of my in-scope questions pass the relevance gate, and the *largest*
+best-distance among them is at least 0.10 below the *smallest* best-distance
+among my five `OUT_OF_SCOPE` questions.
 
 **Why this target:**
+Criterion 3 only pushes in one direction. A cutoff of 0.0 would refuse all five
+out-of-scope questions, score a perfect 5 of 5, and leave me with a system that
+answers nothing. This is the criterion that pushes back the other way, and the
+two of them together are what Milestone 4 means by putting the cutoff in the
+gap rather than at a number I liked.
 
+I am asking for a margin rather than just "all five pass" because a threshold
+that works with 0.002 of room is one I got lucky with, not one I measured. On a
+distance scale where 0.3 is a close match and 0.9 is unrelated, 0.10 is enough
+room for the cutoff to sit in the middle of the gap instead of balanced on the
+edge of it.
+
+This is measurable straight off the run log: `run_eval.py` already prints
+`best_distance` for every in-scope question and for every out-of-scope one, in
+the same file. And it can genuinely be missed — my corpus is 14 documents about
+travel logistics in one region, so the two groups are not guaranteed to
+separate cleanly, and the ibuprofen question in particular is not obviously far
+away from a paragraph about minor injuries units.
 
 
 ---

@@ -29,54 +29,135 @@
 
 ## Chunking Strategy
 
-**Chunk size:**
-**Overlap:**
+**Chunk size:** one `##` section per chunk — 183 to 758 characters, 319 on
+average. `CHUNK_SIZE = 1100` is a ceiling, not a window.
+**Overlap:** 0.
 
-<!-- What about YOUR documents made you pick these numbers? Short posts and
-     long sectioned guides don't want the same chunking, and "800 seemed
-     reasonable" earns nothing. Point at something you noticed when you read
-     the documents in Milestone 1.
+My 14 documents are sectioned guides, not posts. Each one is a town or a theme
+divided under `##` headings — "Getting there", "Eat and drink", "When to go" —
+and when I measured them there were 84 such sections with a median of 294
+characters and a longest of 708. Not one reached 800. The author had already
+chunked these documents; the starter's 800-character window was overriding that
+with an arbitrary number.
 
-     If you changed your mind partway through, say so and say why. That's worth
-     more than pretending you got it right first time.
+What that cost, measured before I changed anything:
 
-     Milestone 3. -->
+| | starter (`fallback_split`, 800/120) | mine (`split_documents`) |
+|---|---|---|
+| chunks | 51 | 94 |
+| average length | 650 | 319 |
+| shortest | 24 | 183 |
+| longest | 800 | 758 |
+| spanning more than one heading | 37 of 51 | **0 of 94** |
+| ending at a sentence end | 18 of 51 | **94 of 94** |
+
+The 24-character chunk was `'d Sundays and after 5pm.'`, the leftover tail of a
+document that didn't divide evenly. `guide_elder_ness.md#0` ended mid-word on
+`## Eat and drin` and held four topics at once, including the road-flooding
+sentence one of my test questions depends on.
+
+**The part I got wrong first time.** My initial plan was just "split on `##`",
+and reading the output showed that isn't enough. `guide_elder_ness.md` "Where
+to stay" reads *"The pub has four rooms and the observatory has dormitory
+accommodation…"* — it never says Elder Ness. Sections in these guides are
+topically self-contained but not *referentially* self-contained, so a bare
+section is a complete thought about nowhere in particular and retrieval would
+happily return the right kind of paragraph about the wrong town. Every chunk
+therefore starts with a `Town — Section` label. That label is the difference
+between a chunk that stands alone and one that only looks like it does.
+
+Overlap is 0 because overlap exists to stop a thought being cut in half, and
+splitting at headings already guarantees that. Keeping the starter's 120
+characters would duplicate text and let near-identical chunks compete for the
+same five `TOP_K` slots.
+
+`CHUNK_SIZE` is a ceiling so the strategy degrades sensibly on a corpus that
+needs it: a section over 1100 characters is cut at paragraph breaks, then at
+sentence ends, never mid-word. On `city_guides` nothing triggers it.
+
+**Effect on retrieval.** All five test questions now retrieve a chunk
+containing the answer within `TOP_K=5`, against a criterion-1 target of 4 of 5.
+The Elder Ness question I had predicted would be the one to miss went from
+buried mid-window to rank 1 at distance 0.289.
 
 ## Sample Chunks
 
-<!-- Five chunks, pasted as text. Label each one and name the file it came from
-     AND the function that produced it — the grader checks your code against
-     what you claim here.
+Printed by `python app.py chunks -n 5`, spread across the corpus. Read against
+the question "could someone answer a question using only this?" — four yes, one
+no, discussed underneath.
 
-     `python app.py chunks -n 5` prints all three for you. Copy them straight
-     across.
-
-     Milestone 3. -->
-
-**Chunk 1** — source: `` — produced by: ``
+**Chunk 1** — source: `guide_accessibility.md#0` — produced by: `chunker.py::split_documents`
 
 ```
+Getting around the region with limited mobility — Overview
+
+An honest assessment rather than a promotional one. Some of these places are
+difficult and it is better to know in advance.
 ```
 
-**Chunk 2** — source: `` — produced by: ``
+**Chunk 2** — source: `guide_corry_vale.md#5` — produced by: `chunker.py::split_documents`
 
 ```
+Corry Vale — Where to stay
+
+Perhaps thirty beds in the entire valley, spread across two pubs and a handful of farmhouse rooms. In summer these are booked months ahead. Camping is permitted on two marked fields and nowhere else.
 ```
 
-**Chunk 3** — source: `` — produced by: ``
+**Chunk 3** — source: `guide_givens_mill.md#2` — produced by: `chunker.py::split_documents`
 
 ```
+Givens Mill — Getting around
+
+Everything is on one street along the river. The mill is at one end and the church at the other, eight minutes apart. The riverside path continues in both directions for as far as you want to walk.
 ```
 
-**Chunk 4** — source: `` — produced by: ``
+**Chunk 4** — source: `guide_kestrelford.md#4` — produced by: `chunker.py::split_documents`
 
 ```
+Kestrelford — What to see
+
+The market square on a Saturday morning is the main event and has run continuously since the 1400s. The parish church has a 13th-century tower you can climb for £2. The old trackbed walk runs six miles to the next village along an easy gradient and is the best half-day here.
 ```
 
-**Chunk 5** — source: `` — produced by: ``
+**Chunk 5** — source: `guide_pellew_sands.md#6` — produced by: `chunker.py::split_documents`
 
 ```
+Pellew Sands — When to go
+
+June and September for the beach without the crowds. July and August are busy and the town is at its most itself, for better and worse. Winter is bleak, largely closed, and has a following among people who like that sort of thing.
 ```
+
+### Reading them
+
+Chunks 2 through 5 pass. Each names its own place, holds one topic, and carries
+facts someone could answer from — thirty beds across two pubs; eight minutes
+end to end; £2 for the tower; June and September for the beach.
+
+**Chunk 1 fails, and it is the interesting one.** It is a complete thought and
+it ends at a sentence boundary, so it satisfies criterion 4 — but it answers no
+question at all. It is editorial framing, not content. It exists because my
+chunker turns the paragraph before a document's first `##` into an "Overview"
+chunk, which is right for the ten town guides (*"Elder Ness is a headland with
+a village of 300 on it, a lighthouse, a bird observatory"* — population and
+description, worth retrieving) and wrong for a thematic guide whose opening
+paragraph is just a preface.
+
+It does measurable harm. On my third test question — *"Which town in the region
+is easiest to get around with limited mobility?"* — this framing chunk ranks
+**1st at distance 0.386**, while `guide_accessibility.md#1`, the chunk that
+actually names Thornby Wells as the easiest town, ranks **4th at 0.549**. The
+question still passes criterion 1 because rank 4 is inside `TOP_K=5`, but a
+content-free chunk is taking the top slot and would beat the real answer
+outright at `TOP_K=3`.
+
+I chose not to fix it in this milestone. The obvious rule — merge a preamble
+shorter than about 150 characters into the section after it — would work: this
+preamble is 123 characters and the next shortest of the ten is 187. But it
+would be a rule fitted to a single outlier, which is the same mistake I talked
+myself out of when I rejected a 200-character minimum length in `criteria.md`.
+It is written down here instead as the candidate for unit 2's "fix one thing
+and re-run", where I already have the before-number to beat: answer chunk at
+rank 4, framing chunk at rank 1.
 
 ## Sample Answer
 

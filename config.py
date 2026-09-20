@@ -24,11 +24,24 @@ CORPUS = os.getenv("AI201_CORPUS", "campus_life")
 
 
 # ─── Chunking (Milestone 3) ──────────────────────────────────────────────────
-# These are deliberately plain, generic numbers. Milestone 3 is where you
-# replace them with numbers that fit the documents you actually read.
+# `chunker.py::split_documents` splits city_guides on its `##` headings, one
+# chunk per section. So CHUNK_SIZE is a CEILING, not a window: a section longer
+# than this gets cut at paragraph breaks and then at sentence ends. The longest
+# section in this corpus is 708 characters, so nothing reaches it.
+#
+# 1100 rather than 800 because 800 would start cutting sections that are single
+# complete thoughts, which is the whole thing I am trying to stop.
+CHUNK_SIZE = 1100      # ceiling per chunk, in characters
 
-CHUNK_SIZE = 800        # characters per chunk
-CHUNK_OVERLAP = 120     # characters shared between neighbouring chunks
+# 0 because sections do not overlap. Overlap exists to stop a thought being cut
+# in half; splitting at headings already guarantees that. Keeping the starter's
+# 120 would duplicate text and let near-duplicate chunks compete for the same
+# TOP_K slots.
+CHUNK_OVERLAP = 0
+
+# The starter's numbers, kept so unit 2 can reproduce the baseline:
+#   fallback_split(docs, chunk_size=800, overlap=120)
+#   -> 51 chunks, 650 avg, shortest 24, longest 800
 
 
 # ─── Retrieval (Milestone 4) ─────────────────────────────────────────────────

@@ -1,28 +1,54 @@
 """
 Stage 2 of the pipeline: splitting documents into chunks.
 
-⚠️ THIS IS THE FILE YOU CHANGE IN MILESTONE 3.
+Milestone 3. `split_documents` splits on the `##` headings the guides are
+already written with, one chunk per section, no overlap.
 
-`split_documents` below is deliberately plain. It cuts every document into
-fixed-size pieces with a fixed overlap and pays no attention to where sentences
-or paragraphs end. It works, and it is not good.
+WHAT THE STARTER DID, measured before replacing it (`city_guides`, 800-char
+windows with 120 of overlap):
 
-On a corpus of short posts it may not cut anything at all: `campus_life` comes
-out as 88 documents and 88 chunks, because almost nothing in it reaches 800
-characters. That is the baseline, not a bug — Milestone 3 is where you decide
-whether one post should stay one chunk.
+    51 chunks, 650 characters on average (shortest 24, longest 800)
+    37 of 51 chunks spanned more than one heading
+    15 of 51 started at a heading
+    18 of 51 ended at a sentence end
 
-Your job in Milestone 3 is to replace the *body* of `split_documents` with a
-strategy that fits the documents you actually read in Milestone 1. Keep the
-name and the shape of what it returns — the rest of the pipeline calls it, and
-your README has to name the function that produced your chunks.
+The 24-character chunk was `'d Sundays and after 5pm.'` — the tail of a
+document that did not divide evenly. `guide_elder_ness.md#0` ended mid-word, on
+`## Eat and drin`, and held four topics at once.
 
-If you get stuck for 30 minutes, `fallback_split` is the original. Switch back
-to it, write down what you saw, and move on. That's a real observation about
-your pipeline, not giving up.
+WHY SECTIONS:
+
+1. The 14 guides are already divided into 84 `##` sections — "Getting there",
+   "Eat and drink", "When to go". Median 294 characters, longest 708, none over
+   800. The author already chunked these documents; the starter was overriding
+   that with an arbitrary character count.
+
+2. Sections are topically self-contained but NOT referentially self-contained.
+   `guide_elder_ness.md` "Where to stay" begins "The pub has four rooms" and
+   never names Elder Ness. A bare section is a complete thought about nowhere
+   in particular, so every chunk carries a `Town — Section` label. Without it
+   this strategy would retrieve the right kind of paragraph about the wrong
+   town.
+
+3. Overlap is 0. Overlap exists to stop a thought being cut in half, and
+   splitting at headings already guarantees that. Keeping 120 characters of it
+   would duplicate text and let near-identical chunks compete for the same five
+   top-k slots.
+
+CHUNK_SIZE is now a ceiling rather than a window: a section longer than it gets
+cut at paragraph breaks, then at sentence ends, never mid-word. On this corpus
+nothing is long enough to trigger that — it is there so the strategy degrades
+sensibly rather than producing one enormous chunk on a corpus that needs it.
+
+`fallback_split` below is the starter's original, kept for the before/after
+comparison in unit 2. Reproduce the baseline above by calling it explicitly:
+`fallback_split(docs, chunk_size=800, overlap=120)` — the config defaults it
+otherwise reads are now this strategy's numbers, not the starter's.
 """
 
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import config
 from ingest import Document
@@ -80,24 +106,153 @@ def fallback_split(
     return chunks
 
 
+_TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.M)
+_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$", re.M)
+
+
+def _document_title(text: str, source: str) -> str:
+    """
+    The name of the place this document is about.
+
+    Prefer the `# Title` line. Fall back to the filename, since the provided
+    `.txt` corpora have no headings at all and still need a label.
+    """
+    match = _TITLE_RE.search(text)
+    if match:
+        return match.group(1).strip()
+
+    stem = re.sub(r"^(guide|thread|admin|course|advising)_", "", Path(source).stem)
+    return stem.replace("_", " ").strip().title()
+
+
+def _sections(text: str) -> list[tuple[str, str]]:
+    """
+    Cut a document at its `##` headings into (heading, body) pairs.
+
+    The title line and opening paragraph — everything before the first `##` —
+    come back as ("Overview", ...), because on these guides that paragraph
+    holds the population and the one-line description of the town and is worth
+    retrieving on its own.
+
+    A document with no `##` headings comes back as one ("", body) pair, which
+    `_fit` then cuts on paragraph breaks. Headings with nothing under them are
+    dropped rather than becoming empty chunks.
+    """
+    headings = list(_HEADING_RE.finditer(text))
+
+    if not headings:
+        return [("", _TITLE_RE.sub("", text, count=1).strip())]
+
+    sections: list[tuple[str, str]] = []
+
+    preamble = _TITLE_RE.sub("", text[: headings[0].start()], count=1).strip()
+    if preamble:
+        sections.append(("Overview", preamble))
+
+    for i, match in enumerate(headings):
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        body = text[match.end() : end].strip()
+        if body:
+            sections.append((match.group(1).strip(), body))
+
+    return sections
+
+
+def _sentences(paragraph: str, budget: int) -> list[str]:
+    """
+    One paragraph too long to fit, packed at sentence ends.
+
+    Packing greedily up to `budget` leaves an orphan tail — a 456-character
+    paragraph against a 400 budget comes out as 379 + 75, and a 75-character
+    fragment is exactly what I replaced the starter's chunker to stop producing.
+    So aim for equal pieces instead: work out how many are needed, then pack to
+    that share of the text rather than to the ceiling.
+    """
+    needed = -(-len(paragraph) // budget)          # ceiling division
+    target = -(-len(paragraph) // needed) if needed else budget
+
+    pieces: list[str] = []
+    current = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", paragraph):
+        if not current:
+            current = sentence
+        elif len(current) + 1 + len(sentence) <= target:
+            current = f"{current} {sentence}"
+        else:
+            pieces.append(current)
+            current = sentence
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+def _fit(body: str, budget: int) -> list[str]:
+    """
+    One section, cut only if it does not fit in `budget` characters.
+
+    Cuts at paragraph breaks first, sentence ends second, and never mid-word.
+    On `city_guides` this returns `[body]` every time: the longest section is
+    708 characters and the budget is larger than that.
+    """
+    if len(body) <= budget:
+        return [body]
+
+    pieces: list[str] = []
+    current = ""
+
+    for paragraph in re.split(r"\n\s*\n", body):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+
+        units = [paragraph] if len(paragraph) <= budget else _sentences(paragraph, budget)
+        for unit in units:
+            if not current:
+                current = unit
+            elif len(current) + 2 + len(unit) <= budget:
+                current = f"{current}\n\n{unit}"
+            else:
+                pieces.append(current)
+                current = unit
+
+    if current:
+        pieces.append(current)
+    return pieces
+
+
 def split_documents(documents: list[Document]) -> list[Chunk]:
     """
-    Split documents into chunks. ⚠️ REPLACE THE BODY OF THIS IN MILESTONE 3.
+    One chunk per `##` section, labelled with the town it belongs to.
 
-    Right now it just calls the fallback. That is the plain, generic behaviour
-    the brief is talking about.
-
-    When you write your own strategy, set `produced_by` to
-    "chunker.py::split_documents" so your README's Sample Chunks section names
-    the right function. `app.py chunks` prints that string for you.
-
-    Things worth thinking about before you write any code:
-      - Are your documents short posts or long guides?
-      - Is the useful information in one sentence, or spread over a paragraph?
-      - Would splitting on paragraph breaks keep more thoughts intact than
-        splitting on a character count?
+    See the module docstring for what the starter did and why this replaces it.
+    The short version: these guides arrive pre-divided into 84 topical sections
+    that all fit inside one chunk, so the sections are the chunks — and each one
+    gets a `Town — Section` first line, because a section body on its own never
+    names its own town.
     """
-    return fallback_split(documents)
+    chunks: list[Chunk] = []
+
+    for doc in documents:
+        title = _document_title(doc.text, doc.source)
+        index = 0
+
+        for heading, body in _sections(doc.text):
+            label = f"{title} — {heading}" if heading else title
+            # The label is part of the chunk, so it comes out of the ceiling.
+            budget = max(config.CHUNK_SIZE - len(label) - 2, 200)
+
+            for piece in _fit(body, budget):
+                chunks.append(
+                    Chunk(
+                        text=f"{label}\n\n{piece}",
+                        source=doc.source,
+                        index=index,
+                        produced_by="chunker.py::split_documents",
+                    )
+                )
+                index += 1
+
+    return chunks
 
 
 def describe(chunks: list[Chunk]) -> str:

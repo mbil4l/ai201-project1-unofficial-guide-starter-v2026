@@ -401,7 +401,7 @@ the generated answer — those come from `tools/verify_criteria.py`.
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 1. Retrieved chunk contains the answer | 4 of 5 | 4/5 | 4/5 | 4/5 | MET |
 | 2. Every answer names a source | 5 of 5 | 5/5 | 4/5 | 5/5 | MISSED |
 | 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
 | 4. Each chunk holds exactly one section | 10 of 10 | 10/10 | 10/10 | 10/10 | MET |
@@ -415,11 +415,12 @@ number goes in all three columns. Criterion 2 is the only one that depends on
 what the model writes, and it is the only one that varied — which is also why
 it is the one that missed.
 
-### Criterion 1 — retrieved chunks contain the answer · 5/5 · MET
+### Criterion 1 — retrieved chunks contain the answer · 4/5 · MET
 
 `tools/verify_criteria.py::criterion_1`, which searches with `store.py::search`
-at `config.TOP_K` = 5 and looks for each question's `expects` string in the
-retrieved chunk text. Real output for the two questions worth looking at:
+at `config.TOP_K` = 5, looks for each question's `expects` string in the
+retrieved chunk text, and prints the chunk so the match can be read rather than
+trusted. Real output for the three questions worth looking at:
 
 ```
 How often does the access road to the Elder Ness headland flood, and for how long?
@@ -443,15 +444,49 @@ Which town in the region is easiest to get around with limited mobility?
   * 4. 0.5491  guide_accessibility.md       Getting around the region with limited mobility — Straightforward
     5. 0.5526  guide_walking.md             Walking in the region — Moderate, with hills
 
--> 5 of 5 questions had the answer in the retrieved chunks
+Why does Brightwater get quiet in July and August when the rest of the region is busy?
+  expects 'students': string matched at rank 1, REJECTED on reading
+  why: `guide_brightwater.md` — When to go matches on 'students', but it says the
+  students are gone in MAY AND JUNE and that July and August are 'quiet to the
+  point of being dull'. It never connects the two. The chunk that does —
+  `guide_seasons.md` — Summer, 'Brightwater goes quiet to the point of dullness
+  with the university empty' — is at rank 12, distance 0.5185, nowhere near top-k.
+    1. 0.3136  guide_brightwater.md         Brightwater — When to go
+    2. 0.3513  guide_seasons.md             When to visit the region — Autumn, September to November
+    3. 0.3974  guide_regional_transport.md  Getting around the region — The railway
+    4. 0.4218  guide_seasons.md             When to visit the region — Winter, December to February
+    5. 0.4370  guide_brightwater.md         Brightwater — Getting there
+
+-> 4 of 5 questions had the answer in the retrieved chunks
 ```
 
 The Elder Ness question is the one criterion 1 was written around — I said in
 unit 1 that it was the one I expected to miss, and after the heading-split
-chunker it comes back at rank 1. The accessibility question is the one still
-worth watching: the chunk naming Thornby Wells sits at rank 4, behind an
-overview section that names no town at all. That is inside the criterion as I
-wrote it, but it is a rank-ordering weakness rather than a clean pass.
+chunker it comes back at rank 1. The question that misses instead is
+Brightwater, and it took reading to see it.
+
+**The rejected match is the part worth reporting.** My first pass at this
+scored 5 of 5, because `expects` for the Brightwater question is the single
+word `students` and a retrieved chunk contains it. Reading that chunk says
+otherwise: it puts the students leaving in *May and June*, calls July and
+August dull, and never joins the two into a reason. The sentence that is
+actually the answer — *"Brightwater goes quiet to the point of dullness with
+the university empty"* in `guide_seasons.md` "Summer" — sits at rank 12, and
+`Brightwater — Overview` ("roughly doubling in term time … the answer turned
+out to be the university") at rank 8. Neither is within top-k, so neither
+reached the model, which is why all three runs answered that the documents do
+not explain it.
+
+`expects` is a proxy for "contains the answer", written in Milestone 2 before I
+had seen any results, and on this question the proxy and the criterion
+disagree. The criterion wins. `tools/verify_criteria.py` now carries that
+judgement in `READ_AND_REJECTED` with the reason, so re-running it reproduces 4
+of 5 rather than quietly going back to 5.
+
+The accessibility question is the other one worth watching, and it passes:
+the chunk naming Thornby Wells is at rank 4, behind an overview section that
+names no town at all. Inside the criterion as written, but a rank-ordering
+weakness rather than a clean pass.
 
 ### Criterion 2 — every answer names a source · 5/5, 4/5, 5/5 · MISSED
 
@@ -564,13 +599,38 @@ phrased questions that produced 0.639 are not among these five.
 
      Milestone 2. -->
 
+Four MET, one MISSED, against the targets in `criteria.md` as written in unit 1.
+No criterion is revised — all five measured what I meant them to measure, and
+the one I missed I missed on the result, not on the measurement.
+
 | # | Criterion | Verdict | How I decided |
 |---|---|---|---|
-| 1 |  |  |  |
-| 2 |  |  |  |
-| 3 |  |  |  |
-| 4 |  |  |  |
-| 5 |  |  |  |
+| 1 | Retrieved chunks contain the answer — 4 of 5 | **MET** | 4 of 5, the same 4 in every run because retrieval is deterministic. Judged by `tools/verify_criteria.py::criterion_1`, which looks for each question’s `expects` string in the `config.TOP_K` = 5 chunks actually retrieved — but the string match is only a candidate, and reading the chunk it found for the Brightwater question overturned it: the match is on ‘students’ in a chunk that puts them gone in May and June and never says why July and August are quiet. Met at exactly the target, and only because Elder Ness — the question I named in unit 1 as the expected miss — now returns at rank 1. |
+| 2 | Every answer names a source — 5 of 5 | **MISSED** | 14 of 15 answers named a file: 5/5, 4/5, 5/5. Run 2 of the Brightwater question produced two sentences of prose with no filename anywhere in them. Target was all five, every run, so one run at 4 of 5 is a miss — and it is the exact failure criteria.md predicted ("the model dropping the citation from otherwise sound prose"). The argument for calling it a MET instead is below the table. |
+| 3 | Gate stops out-of-corpus questions — 4 of 5 | **MET** | 5 of 5 refused by `run_eval.py::check_out_of_scope` at the 0.72 cutoff. Not close: the nearest out-of-scope question was the ibuprofen one at 0.835, which is the one I predicted would be nearest, and it is still 0.115 clear of the cutoff. |
+| 4 | Each chunk holds exactly one section — 10 of 10 | **MET** | 10 of 10 on the sample, and I checked the whole corpus rather than only the sample for the part of the criterion that covers it: 0 of 94 chunks contain a `##` marker, so no chunk holds text from more than one section, and 94 of 94 end in `.`, `!` or `?` — no sentence cut in half anywhere, not just in the ten I read. "Begins at a heading" I read as the `Town — Section` label being the first line, since Milestone 3's chunker replaces the raw `##` line with that label; on the literal `##` reading the count would be 0 of 10, and that reading would make the criterion untestable against my own chunker. |
+| 5 | Margin between in-scope and out-of-scope — at least 0.10 | **MET** | All five in-scope questions passed the gate, and 0.810 − 0.386 = 0.425, over four times the margin I asked for. Both numbers come from the same run log, so this is arithmetic rather than judgement. |
+
+**The closest call, on criterion 2.** The answer that dropped its source
+was not a wrong answer — it was the model declining to answer, saying the
+documents do not explain why Brightwater is quiet in July. So there is an
+argument that criterion 2 is about *answers* and a refusal is not one, which
+would make this 5 of 5 and a MET.
+
+I am not taking it, for two reasons. The criterion says "every answer the
+system produces", and the system produced that text and showed it to a user;
+nothing in it marks it as a refusal, and `gate.REFUSAL` — the thing the system
+actually returns when it declines — never ran, because this question passed the
+gate at 0.314. And the whole point of the unit-1 reasoning was that attribution
+here is cheap: the filename is handed to the model in the prompt and asked for
+twice. Carving out a class of answers that need not cite anything, invented
+after seeing which answer failed, is the lowering-the-bar move the rubric warns
+about wearing a different hat.
+
+What is genuinely interesting is that runs 1 and 3 refused in the same way and
+*did* cite the file. Same question, same chunks, same prompt — so this is not a
+rule the model doesn't know, it is one it applies inconsistently when the answer
+turns negative. That belongs in the diagnosis, not in the verdict.
 
 ## Diagnoses
 

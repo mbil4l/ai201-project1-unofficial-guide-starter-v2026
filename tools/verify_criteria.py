@@ -23,6 +23,24 @@ import config
 import questions as qs
 
 
+# A substring hit is a candidate, not a verdict. Criterion 1 says the retrieved
+# chunks must CONTAIN THE ANSWER, and `expects` is a proxy for that — one word I
+# wrote in Milestone 2 before I had seen a single result. Where reading the
+# matched chunk says the proxy is wrong, the reading wins and the reason goes
+# here, so that re-running this reproduces the number in my run log instead of
+# quietly disagreeing with it.
+READ_AND_REJECTED = {
+    "Why does Brightwater get quiet in July and August when the rest of the region is busy?": (
+        "`guide_brightwater.md` — When to go matches on 'students', but it says "
+        "the students are gone in MAY AND JUNE and that July and August are "
+        "'quiet to the point of being dull'. It never connects the two. The chunk "
+        "that does — `guide_seasons.md` — Summer, 'Brightwater goes quiet to the "
+        "point of dullness with the university empty' — is at rank 12, distance "
+        "0.5185, nowhere near top-k."
+    ),
+}
+
+
 def criterion_1(corpus=None, variant="default", top_k=None):
     """For how many questions do the retrieved chunks contain the answer?
 
@@ -49,10 +67,20 @@ def criterion_1(corpus=None, variant="default", top_k=None):
                 found_at = rank
                 break
 
+        rejected = READ_AND_REJECTED.get(question)
+        if found_at and rejected:
+            verdict = f"string matched at rank {found_at}, REJECTED on reading"
+            found_at = None
+        elif found_at:
+            verdict = f"FOUND at rank {found_at}"
+        else:
+            verdict = "NOT FOUND"
+
         hits += found_at is not None
-        verdict = f"FOUND at rank {found_at}" if found_at else "NOT FOUND"
         print(f"{question}")
         print(f"  expects {expects!r}: {verdict}")
+        if rejected:
+            print(f"  why: {rejected}")
         for rank, r in enumerate(results, 1):
             mark = "*" if rank == found_at else " "
             first_line = r.text.split("\n", 1)[0][:70]

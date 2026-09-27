@@ -652,6 +652,186 @@ turns negative. That belongs in the diagnosis, not in the verdict.
 
      Milestone 3. -->
 
+One criterion missed — criterion 2 — and one question failed inside a criterion
+that passed: the Brightwater question, which criterion 1 counts as its one
+allowed miss. Both come back to the same question, and the second one turned
+out to be the more useful of the two.
+
+### 1. Criterion 2 — generation. The citation rule has no refusal branch.
+
+Run 2 of the Brightwater question returned *"The provided documents do not
+explain why Brightwater gets quiet in July and August, nor do they state that
+the rest of the region is busy during those months."* — no filename anywhere in
+it.
+
+The mechanism is in `generate.py::GROUNDING_INSTRUCTION`. Two of its rules
+apply to this answer and they do not overlap:
+
+```
+- If the documents don't cover the question, say you don't have enough information. Do not guess.
+- Name the document each claim came from, using the filename given in each excerpt.
+```
+
+The citation rule attaches a filename **to a claim**. An answer that says the
+documents do not cover something makes no claim drawn from a document, so
+there is nothing for the rule to bind to, and the refusal rule above it never
+asks for a file. The prompt's closing line — *"name the file each claim came
+from"* (`generate.py::build_prompt`) — repeats the same phrasing and the same
+gap. So on a refusal the model is free either way, and across three runs it
+went both ways: runs 1 and 3 cited `guide_brightwater.md` voluntarily, run 2
+did not.
+
+That is why this shows up as 5/5, 4/5, 5/5 rather than a clean failure. It is
+not a rule the model is ignoring; it is a rule that does not cover the case.
+Fourteen of fifteen answers cited a file, and the fifteenth is the only one of
+the fifteen that refused.
+
+### 2. The Brightwater question — retrieval, caused upstream in chunking.
+
+The corpus answers this question. `guide_seasons.md` "Summer, June to August"
+says *"Brightwater goes quiet to the point of dullness with the university
+empty"*, and `guide_brightwater.md` "Overview" says the town roughly doubles in
+term time. Neither was retrieved. They rank **12th (0.5185)** and **8th
+(0.4835)** against a `TOP_K` of 5.
+
+The mechanism is what my Milestone 3 chunker does to a section that is about
+several places at once. The whole "Summer" section is one chunk, and it covers
+three towns:
+
+```
+When to visit the region — Summer, June to August
+
+June is excellent everywhere. July and August split: Halden Bay becomes very
+busy and the parking problem dominates, Kestrelford fills with walkers, and
+Brightwater goes quiet to the point of dullness with the university empty.
+
+If you are going to Halden Bay in August, arrive before 10am or plan to use the
+overflow lot.
+```
+
+One chunk is one vector, so that vector has to stand for Halden Bay parking,
+Kestrelford walkers *and* Brightwater emptying out. The Brightwater clause is
+roughly a quarter of the text, and the embedding lands between the three rather
+than on any of them.
+
+I measured the dilution rather than assuming it.
+`tools/measure_dilution.py::main` embeds the same answer twice with the same
+model `store.py` indexes with — once inside the section as indexed, once as the
+town-specific excerpt a town-aware chunker would have produced — and asks where
+each would rank:
+
+```
+# Dilution: the whole section vs the town-specific excerpt inside it
+# embedding all-MiniLM-L6-v2 via ONNXMiniLM_L6_V2, cosine, lower is better
+
+Why does Brightwater get quiet in July and August when the rest of the region is busy?
+  When to visit the region — Summer, June to August  (guide_seasons.md)
+    whole section, as indexed : 0.5185   rank 12 of 94
+    town excerpt alone        : 0.3066   would beat 5 of the 5 retrieved
+    top-k is 5, so the section was NOT retrieved
+
+Which town in the region is easiest to get around with limited mobility?
+  Getting around the region with limited mobility — Straightforward  (guide_accessibility.md)
+    whole section, as indexed : 0.5491   rank 4 of 94
+    town excerpt alone        : 0.3233   would beat 5 of the 5 retrieved
+    top-k is 5, so the section was retrieved
+```
+
+The same sentence the model never saw scores 0.3066 on its own — ahead of the
+chunk that actually took rank 1 (0.3136). So this is not the embedding model
+failing to understand "quiet in summer" means "the university is empty". It
+understands that sentence fine. It is the company the sentence keeps.
+
+### The pattern: my chunking rule fits nine of my fourteen documents.
+
+Both of my weak retrieval results are in the same five files, and it is not a
+coincidence — it is a shape my corpus has and my chunker does not know about.
+
+- **Nine town guides** (`guide_brightwater.md`, `guide_halden_bay.md`, …) are
+  one place per document, and a `##` section in them is one topic about one
+  place. Splitting on headings is exactly right here, and this is where my
+  three clean passes come from: Kestrelford at 0.158, Halden Bay at 0.283,
+  Elder Ness at 0.289, all rank 1 or 2.
+- **Five regional guides** (`guide_seasons.md`, `guide_accessibility.md`,
+  `guide_eating.md`, `guide_walking.md`, `guide_regional_transport.md`) are one
+  *topic* per document, and a `##` section in them sweeps across many towns.
+
+From `tools/measure_dilution.py::corpus_shape`:
+
+```
+# Where the multi-town chunks are
+
+  94 chunks: 22 from the 5 regional guides, 72 from the 9 town guides
+  naming 2+ towns   regional 19 of 22   |   town guides 20 of 72
+  median characters regional 444        |   town guides 278
+
+  the most crowded sections:
+    7 towns  guide_accessibility.md       Getting around the region with limited mobility — Practical
+    4 towns  guide_walking.md             Walking in the region — Easy, on good surfaces
+    4 towns  guide_eating.md              Eating across the region — The pattern worth knowing
+    4 towns  guide_eating.md              Eating across the region — Opening hours
+```
+
+Nineteen of the twenty-two regional chunks name two or more towns, against 20
+of 72 from the town guides — and those twenty are mostly one-line cross
+references ("nearest station is Pellew Sands, 40 minutes by road") rather than
+sections that genuinely cover two places.
+
+My criterion 4 reasoning in unit 1 — "the author already chunked these
+documents, the starter was overriding that with an arbitrary character count" —
+was right about nine documents and wrong about five. In the regional guides the
+author's unit is the section, but the unit a *question* asks about is the town,
+and those are not the same thing. A one-section chunk from `guide_seasons.md`
+is a complete thought about the region and a quarter of a thought about
+Brightwater.
+
+That is one problem, not two. It produced the criterion 1 miss outright, and it
+is also why the accessibility question passes criterion 1 on a chunk at rank 4
+behind an overview section that names no town at all.
+
+### What I ruled out, and how
+
+- **Loading.** The answer sentence is in the corpus and arrives intact:
+  `guide_seasons.md:16`. Nothing was dropped or mangled on the way in.
+- **A chunk boundary splitting the answer.** This is the failure the milestone
+  describes — one sentence cut across two chunks so neither is enough — and it
+  is *not* what happened. The sentence sits whole inside one chunk. My problem
+  is the opposite one: a chunk holding too much, not too little. Worth writing
+  down, because the two failures look identical from the run log and want
+  opposite fixes.
+- **The embedding model.** Ruled out by the measurement above: it scores the
+  same sentence at 0.3066 in isolation. A different or larger model is not what
+  stands between me and this answer.
+- **`TOP_K` too small.** Raising it from 5 to 12 would pull the Summer chunk in
+  and fix this one question, at the cost of seven extra chunks of unrelated
+  text in every prompt the system ever sends. It treats the symptom: the chunk
+  would still be ranked 12th, and I would be relying on a wide enough net
+  rather than on the right thing ranking highly.
+- **The relevance gate.** Not involved. The question passed at 0.3136, well
+  inside the 0.72 cutoff, and the model was asked. Criterion 5's margin holds
+  at 0.425.
+
+### The two are connected, and only one fix covers both
+
+The citation drop happened on the one question where retrieval failed to
+deliver the answer. Retrieval sent the model five chunks that do not answer the
+question, the model correctly said so, and the refusal branch of the prompt —
+the branch with no citation requirement — was reached for the only time in
+fifteen answers.
+
+So fixing the chunking would probably make criterion 2 go green, by never
+reaching the refusal branch again with these five questions. That is worth
+being explicit about, because it would be hiding the defect rather than fixing
+it: the refusal branch is supposed to be reachable, out-of-corpus questions
+will reach it by design, and it would still cite nothing when they do. The
+prompt gap is a real defect that my test only exposed by accident, and it needs
+its own fix.
+
+<!-- Milestone 4: the improvement. Chunking the five regional guides by town
+     within section addresses diagnosis 2 and the pattern; a citation rule that
+     covers the refusal branch addresses diagnosis 1. Which one I do, and what
+     it actually did to the numbers, goes below. -->
+
 ## The Improvement
 
 **What I changed:**

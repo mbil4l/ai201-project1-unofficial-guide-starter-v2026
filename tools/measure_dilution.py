@@ -98,27 +98,59 @@ def cosine_distance(embed, a, b):
     return 1 - dot / norm
 
 
+def sections(documents):
+    """Every `##` section in the corpus as {label: text}, however it is chunked.
+
+    Read from the documents rather than from the chunks, because the whole
+    point of the improvement is that these sections are no longer single
+    chunks. Taking them from `split_documents` would mean this script stopped
+    running the moment its own finding was acted on.
+    """
+    from chunker import _document_title, _sections
+
+    out = {}
+    for doc in documents:
+        title = _document_title(doc.text, doc.source)
+        for heading, body in _sections(doc.text):
+            label = f"{title} — {heading}" if heading else title
+            out[label] = (f"{label}\n\n{body}", doc.source)
+    return out
+
+
 def main():
+    import argparse
+
     from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
     from ingest import load_documents
     from chunker import split_documents
     from store import search
 
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--variant",
+        default="default",
+        help="index to take ranks from (default is the pre-improvement index)",
+    )
+    args = parser.parse_args()
+
     embed = ONNXMiniLM_L6_V2()
-    chunks = {c.text.split("\n", 1)[0]: c for c in split_documents(load_documents(config.CORPUS))}
+    documents = load_documents(config.CORPUS)
+    chunks = split_documents(documents)
+    by_label = sections(documents)
 
     print("# Dilution: the whole section vs the town-specific excerpt inside it")
-    print(f"# embedding {config.EMBEDDING_MODEL} via ONNXMiniLM_L6_V2, cosine, lower is better\n")
+    print(f"# embedding {config.EMBEDDING_MODEL} via ONNXMiniLM_L6_V2, cosine, lower is better")
+    print(f"# ranks from the '{args.variant}' index\n")
 
     for question, label, excerpt in CASES:
-        chunk = chunks[label]
+        section_text, source = by_label[label]
         labelled_excerpt = f"{label}\n\n{excerpt}"
 
-        whole = cosine_distance(embed, question, chunk.text)
+        whole = cosine_distance(embed, question, section_text)
         alone = cosine_distance(embed, question, labelled_excerpt)
 
-        results = search(question, top_k=len(chunks), corpus=config.CORPUS)
+        results = search(question, top_k=len(chunks), corpus=config.CORPUS, variant=args.variant)
         rank = next(
             (i for i, r in enumerate(results, 1) if r.text.split("\n", 1)[0] == label),
             None,
@@ -126,14 +158,21 @@ def main():
         beats = sum(1 for r in results[:5] if r.distance > alone)
 
         print(question)
-        print(f"  {label}  ({chunk.source})")
-        print(f"    whole section, as indexed : {whole:.4f}   rank {rank} of {len(results)}")
-        print(f"    town excerpt alone        : {alone:.4f}   would beat {beats} of the 5 retrieved")
-        print(f"    top-k is {config.TOP_K}, so the section "
-              f"{'was retrieved' if rank and rank <= config.TOP_K else 'was NOT retrieved'}")
+        print(f"  {label}  ({source})")
+        if rank:
+            print(f"    whole section, as indexed : {whole:.4f}   rank {rank} of {len(results)}")
+            print(f"    town excerpt alone        : {alone:.4f}   "
+                  f"would beat {beats} of the 5 retrieved")
+            print(f"    top-k is {config.TOP_K}, so the section "
+                  f"{'was retrieved' if rank <= config.TOP_K else 'was NOT retrieved'}")
+        else:
+            print(f"    whole section             : {whole:.4f}   "
+                  f"not a chunk in this index any more")
+            print(f"    town excerpt alone        : {alone:.4f}   "
+                  f"would beat {beats} of the 5 retrieved")
         print()
 
-    corpus_shape(list(chunks.values()))
+    corpus_shape(chunks)
 
 
 if __name__ == "__main__":

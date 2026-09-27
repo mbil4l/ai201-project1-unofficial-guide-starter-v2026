@@ -220,17 +220,208 @@ def _fit(body: str, budget: int) -> list[str]:
     return pieces
 
 
+def _place_names(documents: list[Document]) -> set[str]:
+    """
+    Which document titles are places, worked out from the corpus itself.
+
+    A place guide's title gets talked about by other documents — `guide_seasons.md`
+    talks about Halden Bay, `guide_walking.md` about Kestrelford. A topic
+    guide's title never does: nothing in this corpus says "When to visit the
+    region" in a sentence. So a title that shows up in another document's text
+    is a place, and one that doesn't is a topic.
+
+    Other documents' title lines do not count, which is not a detail I would
+    have predicted. `guide_regional_transport.md` is titled "Getting around the
+    region", and that is a prefix of `guide_accessibility.md`'s title, "Getting
+    around the region with limited mobility". Counting title lines made the
+    transport guide look like a place, so it was the one topic guide that never
+    got split.
+
+    Derived rather than hardcoded because a list of nine town names would be a
+    list about `city_guides` living in a file that also has to chunk three
+    other corpora.
+    """
+    titles = {_document_title(doc.text, doc.source): doc.source for doc in documents}
+    bodies = {
+        doc.source: _TITLE_RE.sub("", doc.text, count=1) for doc in documents
+    }
+    return {
+        title
+        for title, source in titles.items()
+        if any(title in body for name, body in bodies.items() if name != source)
+    }
+
+
+def _clauses(sentence: str, places: list[str]) -> list[tuple[str, str]]:
+    """
+    One sentence about several places, cut into (place, text) at its commas.
+
+    This is the ugly part of the strategy and it is worth being honest about
+    why it exists. `guide_seasons.md` "Summer" contains:
+
+        July and August split: Halden Bay becomes very busy and the parking
+        problem dominates, Kestrelford fills with walkers, and Brightwater goes
+        quiet to the point of dullness with the university empty.
+
+    Three towns, one sentence. Keeping it whole and filing it under all three
+    towns scores 0.4765 against my Brightwater question — better than the 0.5185
+    it scores inside the full section, and still outside the top five. Cutting
+    it at the commas scores 0.3398. So a sentence boundary is not a fine enough
+    cut for a sentence built this way, and nothing less than the comma moves
+    this question into retrieval.
+
+    Each piece carries the sentence's lead-in — "July and August split:" — so
+    the Brightwater clause does not arrive detached from the months it is about.
+    """
+    positions = sorted((sentence.index(p), p) for p in places)
+    lead = sentence[: positions[0][0]].strip()
+    if len(lead) > 80:                      # a clause of its own, not a lead-in
+        lead = ""
+
+    groups: list[tuple[list[str], list[str]]] = []
+    waiting_places: list[str] = []
+    waiting_text: list[str] = []
+
+    for piece in re.split(r"(?<=[,;])\s+", sentence):
+        piece = piece.strip()
+        if not piece:
+            continue
+
+        named = [p for p in places if p in piece]
+        remainder = piece
+        for place in named:
+            remainder = remainder.replace(place, " ")
+        remainder = re.sub(r"\b(and|or)\b|[\s,;.:]+", " ", remainder).strip()
+
+        if named and not remainder:
+            # A bare name in a list: "Kestrelford," on its own says nothing.
+            # It is waiting for the predicate the whole list shares.
+            waiting_places.extend(named)
+            waiting_text.append(piece)
+        elif named:
+            groups.append((waiting_places + named, waiting_text + [piece]))
+            waiting_places, waiting_text = [], []
+        elif groups and not waiting_places:
+            groups[-1][1].append(piece)     # a continuation of the last place
+        else:
+            waiting_text.append(piece)      # lead-in, already captured above
+
+    if waiting_places:
+        if groups:
+            groups[-1][0].extend(waiting_places)
+            groups[-1][1].extend(waiting_text)
+        else:
+            groups.append((waiting_places, waiting_text))
+
+    out: list[tuple[str, str]] = []
+    for i, (group_places, parts) in enumerate(groups):
+        text = re.sub(r"^and\s+", "", " ".join(parts)).rstrip(",;").strip()
+        if i and lead:
+            text = f"{lead} {text}"
+        if not text.endswith((".", "!", "?")):
+            text += "."
+        for place in dict.fromkeys(group_places):
+            out.append((place, text))
+    return out
+
+
+def _by_place(body: str, places: set[str]) -> dict[str, list[str]] | None:
+    """
+    One topic-guide section, split into the places it talks about.
+
+    Returns `{place: [text, ...]}`, or None if the section is about fewer than
+    two places and the section-sized chunk is already the right unit.
+
+    Sentences that name no place are attributed to the last place named in the
+    same paragraph — "It is flat, compact" belongs to whichever town the
+    paragraph opened with, and filing it anywhere else would produce a chunk
+    that states a fact about the wrong town, which is worse than the dilution
+    this is here to fix. Attribution resets at every paragraph break, because
+    in these guides a new paragraph is a new town as often as not.
+
+    That leaves two kinds of place-free sentence and they are not the same
+    thing:
+
+    - Before any place in the section has been named, it is framing. "June is
+      excellent everywhere" belongs in all three of that section's chunks, and
+      the Brightwater chunk needs it to keep "July and August" attached to the
+      answer.
+    - After that, at the head of a later paragraph, it belongs to nothing in
+      particular. `guide_seasons.md` "Winter" opens its second paragraph with
+      "The coastal path is dramatic and frequently shut", which is about the
+      coast and not about Brightwater. Copying it into every town's chunk puts
+      a coast fact under a Brightwater label, which is the cross-town error my
+      grounding rules exist to stop. It comes back under the `None` key and
+      becomes a chunk of its own, keeping the sentence in the index without
+      pinning it on a town.
+    """
+    found = {p for p in places if p in body}
+    if len(found) < 2:
+        return None
+
+    shared: list[str] = []
+    leftover: list[str] = []
+    per: dict[str, list[str]] = {}
+
+    for paragraph in re.split(r"\n\s*\n", body):
+        paragraph = " ".join(paragraph.split())
+        if not paragraph:
+            continue
+
+        current: str | None = None
+        for sentence in re.split(r"(?<=[.!?])\s+", paragraph):
+            named = sorted((sentence.index(p), p) for p in places if p in sentence)
+
+            if not named:
+                if current:
+                    per[current].append(sentence)
+                elif per:
+                    leftover.append(sentence)
+                else:
+                    shared.append(sentence)
+            elif len(named) == 1:
+                current = named[0][1]
+                per.setdefault(current, []).append(sentence)
+            else:
+                for place, text in _clauses(sentence, [p for _, p in named]):
+                    per.setdefault(place, []).append(text)
+                    current = place
+
+    if len(per) < 2:
+        return None
+
+    out: dict[str | None, list[str]] = {
+        place: shared + text for place, text in per.items()
+    }
+    if leftover:
+        out[None] = leftover
+    return out
+
+
 def split_documents(documents: list[Document]) -> list[Chunk]:
     """
-    One chunk per `##` section, labelled with the town it belongs to.
+    One chunk per `##` section — and, in the topic guides, one per place.
 
-    See the module docstring for what the starter did and why this replaces it.
-    The short version: these guides arrive pre-divided into 84 topical sections
-    that all fit inside one chunk, so the sections are the chunks — and each one
-    gets a `Town — Section` first line, because a section body on its own never
-    names its own town.
+    See the module docstring for what the starter did and why this replaced it.
+    The short version: these guides arrive pre-divided into topical sections
+    that all fit inside one chunk, so the sections are the chunks, and each gets
+    a `Place — Section` first line because a section body never names its own
+    town.
+
+    UNIT 2 CHANGE. That rule fits nine of my fourteen documents. The other five
+    — seasons, walking, eating, accessibility, regional transport — are one
+    topic swept across many towns, and 19 of the 22 chunks they produced named
+    two or more. One chunk is one vector, so those vectors stood for three or
+    four towns at once and sat too far from a question about any single one:
+    the sentence answering my Brightwater question ranked 12th of 94 inside its
+    section and 1st on its own (`tools/measure_dilution.py`).
+
+    So a section of a guide that is not about a place is now split into the
+    places it names, labelled `Topic — Section — Place`. Sections of place
+    guides are untouched, and so are topic sections that only name one place.
     """
     chunks: list[Chunk] = []
+    places = _place_names(documents)
 
     for doc in documents:
         title = _document_title(doc.text, doc.source)
@@ -238,19 +429,34 @@ def split_documents(documents: list[Document]) -> list[Chunk]:
 
         for heading, body in _sections(doc.text):
             label = f"{title} — {heading}" if heading else title
-            # The label is part of the chunk, so it comes out of the ceiling.
-            budget = max(config.CHUNK_SIZE - len(label) - 2, 200)
 
-            for piece in _fit(body, budget):
-                chunks.append(
-                    Chunk(
-                        text=f"{label}\n\n{piece}",
-                        source=doc.source,
-                        index=index,
-                        produced_by="chunker.py::split_documents",
+            by_place = None if title in places else _by_place(body, places)
+            parts = (
+                [
+                    (f"{label} — {place}" if place else label, " ".join(text))
+                    for place, text in by_place.items()
+                ]
+                if by_place
+                else [(label, body)]
+            )
+
+            for part_label, part_body in parts:
+                # The label is part of the chunk, so it comes out of the ceiling.
+                budget = max(config.CHUNK_SIZE - len(part_label) - 2, 200)
+                for piece in _fit(part_body, budget):
+                    chunks.append(
+                        Chunk(
+                            text=f"{part_label}\n\n{piece}",
+                            source=doc.source,
+                            index=index,
+                            produced_by=(
+                                "chunker.py::_by_place"
+                                if by_place
+                                else "chunker.py::split_documents"
+                            ),
+                        )
                     )
-                )
-                index += 1
+                    index += 1
 
     return chunks
 

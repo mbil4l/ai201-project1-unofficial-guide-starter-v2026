@@ -394,17 +394,164 @@ against what sounds rigorous.
 
      Milestone 1. -->
 
+Three runs, caching off, `python run_eval.py --label before`. Everything below
+comes from [`results/run_2026-09-27_1611_before.md`](results/run_2026-09-27_1611_before.md)
+except criteria 1 and 4, which are not in that file because neither is about
+the generated answer — those come from `tools/verify_criteria.py`.
+
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1. Retrieved chunk contains the answer | 4 of 5 |  |  |  |  |
-| 2. Every answer names a source | 5 of 5 |  |  |  |  |
-| 3. Gate stops out-of-corpus questions | 4 of 5 |  |  |  |  |
-| 4. | | | | | |
-| 5. | | | | | |
+| 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 2. Every answer names a source | 5 of 5 | 5/5 | 4/5 | 5/5 | MISSED |
+| 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 4. Each chunk holds exactly one section | 10 of 10 | 10/10 | 10/10 | 10/10 | MET |
+| 5. Margin between in-scope and out-of-scope | at least 0.10 | 0.425 | 0.425 | 0.425 | MET |
 
-<!-- Underneath, paste the REAL output for each criterion from one of your
-     runs — the actual text your system produced, not a description of it.
-     Name the file and function that produced it. -->
+Four of the five come out identical in all three columns, and only criterion 2
+moves. That is the shape of the system rather than a shortcut: chunking,
+embedding and retrieval are deterministic here, and the gate is a comparison
+against a fixed number, so criteria 1, 3, 4 and 5 are measured once and the
+number goes in all three columns. Criterion 2 is the only one that depends on
+what the model writes, and it is the only one that varied — which is also why
+it is the one that missed.
+
+### Criterion 1 — retrieved chunks contain the answer · 5/5 · MET
+
+`tools/verify_criteria.py::criterion_1`, which searches with `store.py::search`
+at `config.TOP_K` = 5 and looks for each question's `expects` string in the
+retrieved chunk text. Real output for the two questions worth looking at:
+
+```
+How often does the access road to the Elder Ness headland flood, and for how long?
+  expects 'Six times a year': FOUND at rank 1
+  * 1. 0.2890  guide_elder_ness.md          Elder Ness — Getting there
+    2. 0.3825  guide_elder_ness.md          Elder Ness — Getting around
+    3. 0.4071  guide_walking.md             Walking in the region — Serious, and weather-dependent
+    4. 0.4347  guide_elder_ness.md          Elder Ness — When to go
+    5. 0.4707  guide_elder_ness.md          Elder Ness — What to see
+
+  the chunk that contains it:
+  Elder Ness — Getting there
+
+  A single road in, which floods at the highest spring tides roughly six times a year for about two hours either side of high water. Tide tables are posted at the turning and are worth reading. No public transport of any kind. Nearest station is Pellew Sands, 40 minutes by road.
+
+Which town in the region is easiest to get around with limited mobility?
+  expects 'Thornby Wells': FOUND at rank 4
+    1. 0.3855  guide_accessibility.md       Getting around the region with limited mobility — Overview
+    2. 0.4997  guide_accessibility.md       Getting around the region with limited mobility — Difficult
+    3. 0.5348  guide_corry_vale.md          Corry Vale — Getting around
+  * 4. 0.5491  guide_accessibility.md       Getting around the region with limited mobility — Straightforward
+    5. 0.5526  guide_walking.md             Walking in the region — Moderate, with hills
+
+-> 5 of 5 questions had the answer in the retrieved chunks
+```
+
+The Elder Ness question is the one criterion 1 was written around — I said in
+unit 1 that it was the one I expected to miss, and after the heading-split
+chunker it comes back at rank 1. The accessibility question is the one still
+worth watching: the chunk naming Thornby Wells sits at rank 4, behind an
+overview section that names no town at all. That is inside the criterion as I
+wrote it, but it is a rank-ordering weakness rather than a clean pass.
+
+### Criterion 2 — every answer names a source · 5/5, 4/5, 5/5 · MISSED
+
+`generate.py::answer_from_chunks`, logged by `run_eval.py::main`. Fourteen of
+fifteen answers named a file. The one that did not is run 2 of the Brightwater
+question:
+
+```
+### Why does Brightwater get quiet in July and August when the rest of the region is busy? — run 2
+
+- Best distance: 0.3136 (passed the gate)
+- Sources retrieved: guide_brightwater.md, guide_regional_transport.md, guide_seasons.md
+
+The provided documents do not explain why Brightwater gets quiet in July and August, nor do they state that the rest of the region is busy during those months.
+```
+
+Runs 1 and 3 of the same question refuse in the same way but do cite the file:
+
+```
+### Why does Brightwater get quiet in July and August when the rest of the region is busy? — run 3
+
+The provided documents do not mention why the rest of the region is busy, nor do they state that the rest of the region is busy during July and August; they only state that July and August in Brightwater are "quiet to the point of being dull" (*guide_brightwater.md*).
+```
+
+Against a target of 5 of 5 that is a miss, and 4/5 in one run out of three is
+exactly the case criteria.md said a target of 4 of 5 would have excused in
+advance. For contrast, a passing answer from the same run:
+
+```
+### What hours do the pubs in Kestrelford serve food? — run 2
+
+The pubs in Kestrelford serve food between 12 and 2 and again between 6 and 8:30 (guide_kestrelford.md and guide_eating.md).
+```
+
+### Criterion 3 — the gate stops out-of-corpus questions · 5/5 · MET
+
+`run_eval.py::check_out_of_scope`, cutoff 0.72, one deterministic pass:
+
+```
+Out-of-scope questions (the gate should refuse these):
+  refused  (best distance 0.810)  What is the capital of Mongolia?
+  refused  (best distance 0.881)  How do I change the oil in a diesel engine?
+  refused  (best distance 0.963)  Who won the 1992 World Cup?
+  refused  (best distance 0.835)  What is the recommended dosage of ibuprofen for a headache?
+  refused  (best distance 0.861)  How do I write a for loop in Rust?
+  -> gate refused 5 of 5
+```
+
+The ibuprofen question is the one I named in unit 1 as the likely leak, on the
+grounds that it shares vocabulary with the minor-injuries paragraphs. It came
+back at 0.835 — closer than the World Cup question at 0.963, so the reasoning
+held, but nowhere near the 0.72 cutoff.
+
+### Criterion 4 — each chunk holds exactly one section · 10/10 · MET
+
+`tools/verify_criteria.py::criterion_4` over the chunks from
+`chunker.py::split_documents`, the same 10-chunk sample `app.py chunks` prints:
+
+```
+# 94 chunks total, sampling 10 spread across the corpus
+
+ 1. guide_accessibility.md#0   one section: yes  starts at heading: yes  ends at sentence: yes  | Getting around the region with limited mobility — Overview
+ 2. guide_brightwater.md#4     one section: yes  starts at heading: yes  ends at sentence: yes  | Brightwater — What to see
+ 3. guide_corry_vale.md#5      one section: yes  starts at heading: yes  ends at sentence: yes  | Corry Vale — Where to stay
+ 4. guide_elder_ness.md#1      one section: yes  starts at heading: yes  ends at sentence: yes  | Elder Ness — Getting there
+ 5. guide_givens_mill.md#2     one section: yes  starts at heading: yes  ends at sentence: yes  | Givens Mill — Getting around
+ 6. guide_halden_bay.md#3      one section: yes  starts at heading: yes  ends at sentence: yes  | Halden Bay — Eat and drink
+ 7. guide_kestrelford.md#4     one section: yes  starts at heading: yes  ends at sentence: yes  | Kestrelford — What to see
+ 8. guide_marchwood.md#5       one section: yes  starts at heading: yes  ends at sentence: yes  | Marchwood — Where to stay
+ 9. guide_pellew_sands.md#6    one section: yes  starts at heading: yes  ends at sentence: yes  | Pellew Sands — When to go
+10. guide_seasons.md#3         one section: yes  starts at heading: yes  ends at sentence: yes  | When to visit the region — Winter, December to February
+
+-> 10 of 10 sampled chunks pass all three checks
+```
+
+### Criterion 5 — a clear margin between the two groups · 0.425 · MET
+
+Both numbers are printed by `run_eval.py` into the same file — in-scope best
+distances from `run_eval.py::run_once`, out-of-scope ones from
+`run_eval.py::check_out_of_scope`:
+
+```
+By what time do the car parks in Halden Bay fill up on a summer weekend?   0.283
+What hours do the pubs in Kestrelford serve food?                          0.158
+Which town is easiest to get around with limited mobility?                 0.386   <- largest in-scope
+How often does the access road to the Elder Ness headland flood?           0.289
+Why does Brightwater get quiet in July and August?                         0.314
+
+What is the capital of Mongolia?                                           0.810   <- smallest out-of-scope
+What is the recommended dosage of ibuprofen for a headache?                0.835
+How do I change the oil in a diesel engine?                                0.881
+How do I write a for loop in Rust?                                         0.861
+Who won the 1992 World Cup?                                                0.963
+```
+
+All five in-scope questions passed the gate, and the margin is 0.810 − 0.386 =
+**0.425**, against a target of at least 0.10. The 0.72 cutoff sits inside that
+gap with 0.334 of room below it and 0.090 above. The gap is wider than the
+0.639/0.810 pair I set the cutoff from in Milestone 4, because the loosely
+phrased questions that produced 0.639 are not among these five.
 
 ## Verdicts
 
